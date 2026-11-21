@@ -70,6 +70,7 @@ button.alt{background:transparent;color:var(--accent);border:1.5px solid var(--a
 .hit b{color:var(--accent)}
 .stage{background:radial-gradient(var(--line) 1.2px,transparent 1.2px) 0 0/16px 16px;border-radius:12px;padding:16px 0}
 #ed summary{color:var(--accent)}
+.pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:10px}.pager button{padding:7px 12px}
 .hd{grid-column:1/-1}@media (max-width:860px){.hd{order:-2}.rt{order:-1}}
 #pageRule{display:none}
 #printWrap{display:none}
@@ -106,14 +107,16 @@ button.alt{background:transparent;color:var(--accent);border:1.5px solid var(--a
   <label class="chk"><input type="checkbox" id="cut" checked> Garis potong di tiap foto</label>
   <label>Printer kecil: pecah jadi beberapa lembar (PDF)<select id="tile"><option value="0">Tidak, satu halaman</option><option value="A4">Pecah ke lembar A4</option><option value="A3">Pecah ke lembar A3</option></select></label>
   <h2 class="sec"><i>4</i>Cetak</h2>
-  <label>Jumlah lembar kertas<input type="number" id="sheets" value="1" min="1" max="50"></label>
+  <label>Ulangi semua lembar (jumlah set)<input type="number" id="sheets" value="1" min="1" max="50"></label>
   <button id="go">Cetak</button>
+  <small id="phint"></small>
   <button class="alt" id="pdfb" hidden>Simpan PDF</button>
   <small id="msg2"></small>
   <button class="alt" id="theme">Ganti tema terang/gelap</button>
 </div>
 <div class="rt">
   <div class="hit" id="hit"></div>
+  <div class="pager" id="pager" hidden><button class="alt" id="pp" aria-label="Lembar sebelumnya">‹ Sebelumnya</button><b id="pn"></b><button class="alt" id="pnx" aria-label="Lembar berikutnya">Berikutnya ›</button></div>
   <div class="stage"><div id="pv"><div id="pvIn"></div></div></div>
 </div>
 </div>
@@ -124,7 +127,7 @@ button.alt{background:transparent;color:var(--accent);border:1.5px solid var(--a
 const PAPERS={A0:[841,1189],A1:[594,841],A2:[420,594],A3:[297,420],A4:[210,297],A5:[148,210],A6:[105,148],A7:[74,105],A8:[52,74],Letter:[216,279],F4:[215,330],Kustom:null};
 const PHOTOS={A1:[594,841],A2:[420,594],A3:[297,420],A4:[210,297],A5:[148,210],A6:[105,148],A7:[74,105],A8:[52,74],"2R":[64,89],"3R":[89,127],"4R":[102,152],"5R":[127,178],"6R":[152,203],"8R":[203,254],"10R":[254,305],"Pas foto 2×3 cm":[20,30],"Pas foto 3×4 cm":[30,40],"Pas foto 4×6 cm":[40,60],"KTP / SIM / ID Card":[85.6,54],"Kartu nama":[90,55],"STNK (23×7,5 cm)":[230,75],"e-TBPKP Samsat Digital (23×8 cm)":[230,80],Kustom:null};
 const $=id=>document.getElementById(id),tick=()=>new Promise(r=>setTimeout(r,40));
-let photos=[],sel=0,dl=null;
+let photos=[],sel=0,dl=null,pg=0;
 function fill(s,o,d){s.innerHTML=Object.keys(o).map(k=>`<option value="${k}"${k===d?" selected":""}>${k}${o[k]?` (${o[k][0]}×${o[k][1]} mm)`:""}</option>`).join("")}
 fill($("paper"),PAPERS,"A1");fill($("photo"),PHOTOS,"A7");
 const load=u=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=u});
@@ -137,36 +140,36 @@ function layout(){
   const{P,F}=dims(),m=Math.max(0,+$("margin").value||0),g=Math.max(0,+$("gap").value||0);
   let a=grid(P,F,m,g),rot=false;
   if($("auto").checked){const b=grid(P,[F[1],F[0]],m,g);if(b.cols*b.rows>a.cols*a.rows){a=b;rot=true}}
-  const cap=a.cols*a.rows,k=photos.length;let S=[];
-  if(!k)S=Array(cap).fill(-1);
-  else if($("qty").value==="max"){const base=Math.floor(cap/k),rem=cap%k;photos.forEach((_,i)=>{for(let j=0;j<base+(i<rem?1:0);j++)S.push(i)})}
-  else photos.forEach((p,i)=>{for(let j=0;j<p.qty;j++)S.push(i)});
-  S=S.slice(0,cap);
+  const cap=a.cols*a.rows,k=photos.length;let S=[],pages;
+  if(!k||!cap)pages=[Array(cap).fill(-1)];
+  else if($("qty").value==="max"){const base=Math.floor(cap/k),rem=cap%k;photos.forEach((_,i)=>{for(let j=0;j<base+(i<rem?1:0);j++)S.push(i)});pages=[S.slice(0,cap)]}
+  else{const all=[];photos.forEach((p,i)=>{for(let j=0;j<p.qty;j++)all.push(i)});pages=[];for(let q=0;q<all.length;q+=cap)pages.push(all.slice(q,q+cap));if(!pages.length)pages=[[]]}
+  S=pages[0];
   const uw=a.cols*a.w+(a.cols-1)*g,uh=a.rows*a.h+(a.rows-1)*g;
-  return{P,F,m,g,a,rot,cap,S,x0:(P[0]-uw)/2,y0:(P[1]-uh)/2}
+  return{P,F,m,g,a,rot,cap,S,pages,x0:(P[0]-uw)/2,y0:(P[1]-uh)/2}
 }
 const cxy=(L,i)=>[L.x0+(i%L.a.cols)*(L.a.w+L.g),L.y0+Math.floor(i/L.a.cols)*(L.a.h+L.g)];
 function dpiOf(p,a,fit=$("fit").value){const cw=a.w,ch=a.h,sx=cw/p.w,sy=ch/p.h,s=fit==="cover"?Math.max(sx,sy):fit==="contain"?Math.min(sx,sy):(sx+sy)/2;return 25.4*p.z/s}
 const imgStyle=(p,fit)=>`object-fit:${fit};object-position:${p.px}% ${p.py}%;transform:scale(${p.z});transform-origin:${p.px}% ${p.py}%`;
-function sheetHTML(L){
-  const fit=$("fit").value;
+function sheetHTML(L,S){
+  S=S||L.S;const fit=$("fit").value;
   let h=`<div class="sheet${$("cut").checked?" cut":""}" style="width:${L.P[0]}mm;height:${L.P[1]}mm">`;
-  L.S.forEach((si,i)=>{const[x,y]=cxy(L,i),p=photos[si];
+  S.forEach((si,i)=>{const[x,y]=cxy(L,i),p=photos[si];
     h+=`<div class="cell" style="left:${x}mm;top:${y}mm;width:${L.a.w}mm;height:${L.a.h}mm">${p?`<img src="${p.url}" alt="" style="${imgStyle(p,fit)}">`:""}</div>`});
   return h+"</div>"
 }
 function render(){
-  const L=layout(),{P,F,a,rot,cap,S}=L,fit=$("fit").value;
+  const L=layout(),{P,F,a,rot,cap,S}=L,fit=$("fit").value;if(pg>L.pages.length-1)pg=L.pages.length-1;$("phint").textContent=`Di dialog cetak, pastikan Ukuran kertas = ${$("paper").value==="Kustom"?"":$("paper").value+" "}(${P[0]}×${P[1]} mm), Skala = 100%, Margin = Tidak ada.`;
   $("customPaper").hidden=$("paper").value!=="Kustom";$("customPhoto").hidden=$("photo").value!=="Kustom";
   const pn=$("paper").value==="Kustom"?`${P[0]}×${P[1]} mm`:$("paper").value,fn=$("photo").value==="Kustom"?`${F[0]}×${F[1]} mm`:$("photo").value;
   if(!cap)$("hit").innerHTML=`<b>Tidak muat</b><small>Ukuran foto ${fn} lebih besar dari area kertas ${pn}. Kurangi margin atau pilih ukuran lain.</small>`;
   else{
-    let w="";const used=[...new Set(S)].filter(i=>i>=0);
+    let w="";const flat=L.pages.flat(),tot=flat.length,used=[...new Set(flat)].filter(i=>i>=0);
     if(used.length){const d=Math.min(...used.map(i=>dpiOf(photos[i],a)));w=` Ketajaman terendah ${Math.round(d)} DPI (${d>=250?"tajam":d>=150?"cukup":"akan tampak pecah, perbesar dulu"}).`}
-    const sn=Math.max(1,Math.min(50,+$("sheets").value||1)),sh=+$("margin").value<5?" Printer rumahan biasanya butuh margin minimal 5 mm.":"";
-    $("hit").innerHTML=`<b>${fn} di ${pn}: ${a.cols} kolom × ${a.rows} baris = ${cap} foto</b><small>${rot?"Foto diputar 90° agar lebih banyak muat. ":""}Dicetak ${S.length} foto per lembar${sn>1?`, ${sn} lembar = ${S.length*sn} foto`:""}.${w}${sh}</small>`}
+    const sn=Math.max(1,Math.min(50,+$("sheets").value||1)),wr=$("qty").value==="max"&&photos.length>cap?` ${photos.length-cap} foto tidak ikut dicetak: pilih "Sesuai jumlah per foto" agar disambung ke lembar berikutnya.`:"",sh=+$("margin").value<5?" Printer rumahan biasanya butuh margin minimal 5 mm.":"";
+    $("hit").innerHTML=`<b>${fn} di ${pn}: ${a.cols} kolom × ${a.rows} baris = ${cap} foto</b><small>${rot?"Foto diputar 90° agar lebih banyak muat. ":""}Total ${tot} foto di ${L.pages.length} lembar${sn>1?`, diulang ${sn} set = ${L.pages.length*sn} lembar`:""}.${w}${wr}${sh}</small>`}
   const pxmm=96/25.4,k=Math.min(1,Math.min($("pv").parentElement.clientWidth-8,760)/(P[0]*pxmm));
-  $("pv").style.width=P[0]*pxmm*k+"px";$("pv").style.height=P[1]*pxmm*k+"px";$("pvIn").style.transform=`scale(${k})`;$("pvIn").innerHTML=sheetHTML(L);
+  $("pv").style.width=P[0]*pxmm*k+"px";$("pv").style.height=P[1]*pxmm*k+"px";$("pvIn").style.transform=`scale(${k})`;$("pvIn").innerHTML=sheetHTML(L,L.pages[pg]);$("pager").hidden=L.pages.length<2;$("pn").textContent=`Lembar ${pg+1} dari ${L.pages.length}`;$("pp").disabled=pg<=0;$("pnx").disabled=pg>=L.pages.length-1;
   const p=photos[sel];$("ed").hidden=!p;
   if(p&&cap){
     const fw=Math.min(240,260*a.w/a.h),fh=fw*a.h/a.w;
@@ -209,8 +212,10 @@ fr.onpointermove=e=>{if(!dr)return;const p=photos[sel],w=fr.clientWidth,h=fr.cli
   if(Math.abs(sx)>.01)p.px=cl(dr.px+(e.clientX-dr.x)/sx);if(Math.abs(sy)>.01)p.py=cl(dr.py+(e.clientY-dr.y)/sy);render()};
 fr.onpointerup=fr.onpointercancel=()=>{dr=null};
 function doPrint(){const L=layout();if(!L.cap){alert("Ukuran foto tidak muat di kertas.");return}
-  const N=Math.max(1,Math.min(50,+$("sheets").value||1)),H=sheetHTML(L);$("printWrap").innerHTML=Array(N).fill(H).join("");$("pageRule").textContent=`@media print{@page{size:${L.P[0]}mm ${L.P[1]}mm;margin:0}}`;setTimeout(()=>window.print(),100)}
-$("go").onclick=doPrint;
+  const kn=($("paper").value==="Kustom"?"":$("paper").value+" ")+`(${L.P[0]}×${L.P[1]} mm)`;
+  if(!confirm(`Cetak ke kertas ${kn}?\n\nDi dialog cetak berikutnya:\n1. Pilih printer\n2. Ukuran kertas = ${kn}\n3. Skala = 100%, Margin = Tidak ada\n\nJika ukuran itu tidak ada di daftar, printer tidak mendukungnya. Gunakan Simpan PDF lalu cetak di rental.`))return;
+  const N=Math.max(1,Math.min(+$("sheets").value||1,50,Math.floor(100/L.pages.length))),H=L.pages.map(q=>sheetHTML(L,q)).join("");$("printWrap").innerHTML=Array(N).fill(H).join("");$("pageRule").textContent=`@page{size:${L.P[0]}mm ${L.P[1]}mm;margin:0}`;setTimeout(()=>window.print(),100)}
+$("go").onclick=doPrint;$("pp").onclick=()=>{pg=Math.max(0,pg-1);render()};$("pnx").onclick=()=>{pg++;render()};
 function cellJPG(p,cw,ch,fit){
   const dpi=Math.min(300,Math.max(100,dpiOf(p,{w:cw,h:ch},fit)));let W=cw/25.4*dpi,H=ch/25.4*dpi;const k=Math.min(1,7000/Math.max(W,H));W=Math.round(W*k);H=Math.round(H*k);
   const c=document.createElement("canvas");c.width=W;c.height=H;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,W,H);x.imageSmoothingQuality="high";
@@ -222,21 +227,21 @@ $("pdfb").onclick=async()=>{
   $("msg2").textContent="Membuat PDF…";await tick();
   try{
     const fit=$("fit").value,{P,a}=L,img={};
-    L.S.forEach(i=>{if(i>=0&&!img[i])img[i]=cellJPG(photos[i],a.w,a.h,fit)});
+    L.pages.flat().forEach(i=>{if(i>=0&&!img[i])img[i]=cellJPG(photos[i],a.w,a.h,fit)});
     let T=P,nx=1,ny=1;const R=Math.max(1,Math.min(50,+$("sheets").value||1));const o=10,t=$("tile").value;
     if(t!=="0"){const B=t==="A4"?[210,297]:[297,420];let best=null;
       [[B[0],B[1]],[B[1],B[0]]].forEach(c=>{const X=Math.max(1,Math.ceil((P[0]-o)/(c[0]-o))),Y=Math.max(1,Math.ceil((P[1]-o)/(c[1]-o)));if(!best||X*Y<best.X*best.Y)best={c,X,Y}});
       if(P[0]<=B[0]&&P[1]<=B[1]||P[0]<=B[1]&&P[1]<=B[0]){T=P}else{T=best.c;nx=best.X;ny=best.Y}}
     const fm=(W,H)=>[Math.min(W,H),Math.max(W,H)],or=(W,H)=>W>H?"l":"p";
     const doc=new jspdf.jsPDF({unit:"mm",format:fm(T[0],T[1]),orientation:or(T[0],T[1])});
-    for(let r=0;r<R;r++)for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
-      if(i||j||r)doc.addPage(fm(T[0],T[1]),or(T[0],T[1]));
+    let pn=0;for(let r=0;r<R;r++)for(let pi=0;pi<L.pages.length;pi++)for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+      if(pn++)doc.addPage(fm(T[0],T[1]),or(T[0],T[1]));
       const ox=i*(T[0]-o),oy=j*(T[1]-o);
-      L.S.forEach((si,n)=>{const[cx,cy]=cxy(L,n),x=cx-ox,y=cy-oy;if(x>T[0]||y>T[1]||x+a.w<0||y+a.h<0)return;
+      L.pages[pi].forEach((si,n)=>{const[cx,cy]=cxy(L,n),x=cx-ox,y=cy-oy;if(x>T[0]||y>T[1]||x+a.w<0||y+a.h<0)return;
         if(si>=0)doc.addImage(img[si],"JPEG",x,y,a.w,a.h,"p"+si);else{doc.setFillColor(223,227,218);doc.rect(x,y,a.w,a.h,"F")}
         if($("cut").checked){doc.setDrawColor(120);doc.setLineWidth(.1);doc.rect(x,y,a.w,a.h)}});
-      if(nx*ny>1){doc.setFontSize(7);doc.setTextColor(214,36,110);doc.text(`${R>1?"Lembar "+(r+1)+", ":""}Baris ${j+1}, kolom ${i+1}`,3,4)}}
-    if(dl)await dl.save({filename:"cetak-foto.pdf",data:doc.output("blob")});else doc.save("cetak-foto.pdf");$("msg2").textContent=`PDF ${nx*ny*R} halaman siap.`
+      if(nx*ny>1){doc.setFontSize(7);doc.setTextColor(214,36,110);doc.text(`Lembar ${pi+1}, baris ${j+1}, kolom ${i+1}`,3,4)}}
+    if(dl)await dl.save({filename:"cetak-foto.pdf",data:doc.output("blob")});else doc.save("cetak-foto.pdf");$("msg2").textContent=`PDF ${nx*ny*R*L.pages.length} halaman siap.`
   }catch(e){$("msg2").textContent=e&&e.code==="declined"?"Penyimpanan dibatalkan.":"Gagal membuat PDF. Coba kurangi ukuran kertas atau jumlah foto."}};
 $("theme").onclick=()=>{const r=document.documentElement;r.dataset.theme=getComputedStyle(r).colorScheme==="dark"?"light":"dark"};
 window.addEventListener("resize",render);
